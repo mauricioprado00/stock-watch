@@ -1,0 +1,62 @@
+# Bumps the src/stock-watch submodule in the private repo
+# mauricioprado00/githubio-private-pages, whose push starts the GitHub Pages
+# deploy of mauricioprado00.github.io (it publishes that repo's src/).
+#
+# Requires the SITE_DEPLOY_TOKEN secret: a fine-grained PAT with access to
+# mauricioprado00/githubio-private-pages, permission "Contents: Read and write".
+# Without the secret the job skips instead of failing.
+name: Deploy to mauricioprado00.github.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  bump-submodule:
+    runs-on: ubuntu-latest
+    steps:
+      - id: token
+        env:
+          TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::SITE_DEPLOY_TOKEN is not set; skipping the deploy"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.token.outputs.ok == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: mauricioprado00/githubio-private-pages
+          token: ${{ secrets.SITE_DEPLOY_TOKEN }}
+          submodules: true
+
+      - if: steps.token.outputs.ok == 'true'
+        name: Move submodule to latest main
+        run: git submodule update --remote src/stock-watch
+
+      - if: steps.token.outputs.ok == 'true'
+        name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo "Submodule already up to date"
+            exit 0
+          fi
+          sha=$(git -C src/stock-watch rev-parse --short HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update stock-watch to $sha"
+          # Another repo may push to githubio-private-pages at the same moment;
+          # if this push is rejected, rebase on it and try again.
+          for attempt in 1 2 3; do
+            git push && exit 0
+            git pull --rebase
+          done
+          exit 1

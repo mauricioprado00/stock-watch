@@ -1,0 +1,89 @@
+{
+ "defaults": {
+  "every": 5,
+  "days": 28,
+  "budget": 1800,
+  "port": 8765,
+  "ranges": [
+   "5m",
+   "15m",
+   "20m",
+   "30m",
+   "45m",
+   "1h",
+   "2h",
+   "4h",
+   "Day",
+   "1W",
+   "4W"
+  ]
+ },
+ "symbols": [
+  {
+   "symbol": "COST",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": [
+    {
+     "op": ">=",
+     "price": 1095.0,
+     "say": "sell"
+    },
+    {
+     "op": ">=",
+     "price": 1093.75,
+     "say": "COST reached 1093.75"
+    },
+    {
+     "op": ">=",
+     "price": 1092.5,
+     "say": "COST reached 1092.5"
+    },
+    {
+     "op": "<=",
+     "price": 1088.5,
+     "say": "COST dropped below 1088.5"
+    }
+   ],
+   "markers": []
+  },
+  {
+   "symbol": "ANT",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": []
+  },
+  {
+   "symbol": "NVDA",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": [],
+   "markers": []
+  },
+  {
+   "symbol": "AAPL",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": []
+  },
+  {
+   "symbol": "MSFT",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": [],
+   "markers": []
+  },
+  {
+   "symbol": "AMZN",
+   "tracking": true,
+   "every": 5,
+   "since": 1795548304789,
+   "alarms": []
+  }
+ ]
+}

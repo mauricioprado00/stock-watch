@@ -1,19 +1,12 @@
-# Written by the tracker while it runs: live prices, history, status
-data-*.js
-hist-*.js
-quote-*.js
-symbols.js
-settings.js
-market.js
-store/
-tracker.log
-tracker.pid
+# The data (store/, the *.js files the page reads, stocks.json) is committed on purpose:
+# the published copy of the page shows the last committed snapshot.
 
 # Holds the random code that lets pages edit alarms: never commit it
 api.js
 
-# Your own list of companies, alarms, markers and settings
-stocks.json
+# Only meaningful while the tracker runs
+tracker.log
+tracker.pid
 
 # Files from before the stock command existed
 old/
