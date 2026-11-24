@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock watch</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e8ee; --muted:#8a90a0; --grid:#262a33;
+          --up:#2fbf71; --down:#f0524f; --alarm:#ff9f1c; --line:#4da3ff; --off:#6b7280; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); height:100vh; display:flex; flex-direction:column; overflow:hidden;
+         font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  nav { display:flex; gap:6px; flex-wrap:wrap; padding:10px 16px 0; align-items:center; }
+  nav a { display:flex; gap:8px; align-items:baseline; padding:5px 12px; border-radius:7px; text-decoration:none;
+          color:var(--fg); background:var(--panel); border:1px solid var(--grid); font-variant-numeric:tabular-nums; }
+  nav a:hover { border-color:#3a404d; }
+  nav a.on { border-color:var(--line); background:#1b2433; }
+  nav a b { font-weight:600; letter-spacing:.3px; }
+  nav a .p { color:var(--muted); }
+  nav a.alarm { box-shadow:0 0 0 2px var(--alarm); }
+  nav a.off { opacity:.5; }
+  nav a .dot { font-size:9px; align-self:center; }
+  .dot.live { color:var(--up); } .dot.off { color:var(--off); } .dot.closed, .dot.wait { color:var(--alarm); }
+  #clock { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; padding:0 4px; }
+  #clock b { color:var(--fg); font-weight:600; }
+  #clock.soon b { color:var(--alarm); }
+  header { display:flex; align-items:baseline; gap:18px; flex-wrap:wrap; padding:12px 22px 6px; }
+  #sym { font-size:20px; font-weight:600; letter-spacing:.5px; }
+  #price { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #chg { font-size:18px; font-variant-numeric:tabular-nums; }
+  .meta { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); }
+  #state { padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; letter-spacing:.3px; align-self:center; }
+  #state.live { background:#173626; color:var(--up); }
+  #state.off { background:#2a2d35; color:#b5bac6; }
+  #state.closed, #state.wait { background:#3a2a12; color:var(--alarm); }
+  #ranges { margin-left:auto; display:flex; gap:4px; }
+  #ranges button { background:var(--panel); color:var(--muted); border:1px solid var(--grid);
+                   padding:4px 10px; border-radius:6px; cursor:pointer; font:inherit; }
+  #ranges button.on { color:var(--fg); border-color:var(--line); }
+  #ranges button.temp { border-style:dashed; }
+  #rangeCfg { font-size:15px !important; padding:2px 9px !important; }
+  #histnote { position:absolute; top:6px; left:50%; transform:translateX(-50%); display:none; gap:10px; align-items:center;
+              background:#2a2112ee; border:1px solid #6b4e1c; color:#f3d9a8; padding:4px 6px 4px 12px; border-radius:8px;
+              font-size:13px; white-space:nowrap; }
+  #histnote button { background:var(--alarm); color:#111; border:0; border-radius:6px; padding:3px 10px; cursor:pointer;
+                     font:inherit; font-weight:600; }
+  .rchips { display:flex; flex-wrap:wrap; gap:6px; }
+  .rchips .chip { padding-left:10px; }
+  #modal table.keys { border-collapse:collapse; width:100%; }
+  #modal table.keys td { padding:5px 6px; border-top:1px solid #262a33; vertical-align:top; }
+  #modal table.keys td:first-child { white-space:nowrap; width:1%; padding-right:14px; }
+  #wrap { position:relative; flex:1; min-height:240px; margin:0 12px; }
+  canvas { position:absolute; inset:0; width:100%; height:100%; }
+  #tip { position:absolute; pointer-events:none; background:var(--panel); border:1px solid var(--grid);
+         padding:4px 8px; border-radius:6px; font-variant-numeric:tabular-nums; display:none; white-space:nowrap; }
+  #offnote { position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); pointer-events:none; text-align:center;
+             color:#c4c9d4; background:#171a21e0; border:1px solid var(--grid); border-radius:10px; padding:14px 26px; display:none; }
+  #offnote b { display:block; font-size:22px; letter-spacing:2px; margin-bottom:4px; }
+  #offnote code { color:var(--line); }
+  #banner { display:none; position:fixed; top:14px; left:50%; transform:translateX(-50%);
+            background:var(--alarm); color:#111; font-size:28px; font-weight:800; padding:10px 34px;
+            border-radius:10px; letter-spacing:2px; animation:pulse 1s infinite; cursor:pointer; z-index:5; }
+  @keyframes pulse { 50% { opacity:.55; } }
+  footer { padding:4px 22px; color:var(--muted); font-size:12px; }
+  kbd { border:1px solid var(--grid); border-radius:3px; padding:0 4px; font-size:11px; }
+  #stale { color:var(--down); }
+  #alarmList { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .chip { display:inline-flex; gap:6px; align-items:center; background:var(--panel); border:1px solid var(--grid);
+          border-radius:14px; padding:1px 4px 1px 10px; color:var(--fg); }
+  .chip .sw { width:10px; height:3px; border-radius:2px; }
+  .chip button { background:none; border:0; color:var(--muted); cursor:pointer; font-size:15px; line-height:1;
+                 padding:0 4px; border-radius:10px; }
+  .chip button:hover { color:var(--fg); background:#2a2f3a; }
+  #addAlarm { background:var(--panel); color:var(--muted); border:1px dashed #3a404d; padding:2px 10px;
+              border-radius:14px; cursor:pointer; font:inherit; font-size:13px; }
+  #addAlarm:hover { color:var(--fg); }
+  #addAlarm.on { color:#111; border-style:solid; font-weight:600; }
+  #wrap.adding canvas { cursor:crosshair; }
+  #modalBg { position:fixed; inset:0; background:#0008; display:none; align-items:center; justify-content:center; z-index:10; }
+  #modal { background:var(--panel); border:1px solid #333a47; border-radius:12px; padding:20px 22px; width:min(440px, 92vw);
+           box-shadow:0 20px 60px #000a; }
+  #modal h3 { margin:0 0 14px; font-size:16px; display:flex; align-items:center; gap:10px; }
+  #modal h3 .sw { width:22px; height:4px; border-radius:2px; }
+  #modal label { display:block; color:var(--muted); font-size:12px; margin:10px 0 4px; }
+  #modal .row { display:flex; gap:8px; }
+  #modal input, #modal select { width:100%; background:#0f1115; color:var(--fg); border:1px solid #333a47; border-radius:7px;
+           padding:8px 10px; font:inherit; font-size:15px; }
+  #modal input:focus, #modal select:focus { outline:none; border-color:var(--line); }
+  #modal select { width:auto; }
+  #modal .btns { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+  #modal .btns button { font:inherit; padding:7px 16px; border-radius:7px; border:1px solid #333a47; cursor:pointer;
+           background:#1f232c; color:var(--fg); }
+  #modal .btns .primary { background:var(--line); border-color:var(--line); color:#0b1220; font-weight:600; }
+  #modal .btns .danger { background:var(--down); border-color:var(--down); color:#1a0505; font-weight:600; }
+  #modal .err { color:var(--down); font-size:13px; margin-top:10px; min-height:1em; }
+  #modal .hint { color:var(--muted); font-size:12px; margin-top:8px; }
+  #toast { position:fixed; bottom:34px; left:50%; transform:translateX(-50%); background:#232833; border:1px solid #333a47;
+           color:var(--fg); padding:8px 14px; border-radius:8px; display:none; gap:12px; align-items:center; z-index:9; }
+  #toast button { background:none; border:0; color:var(--line); cursor:pointer; font:inherit; font-weight:600; }
+</style>
+</head>
+<body>
+<div id="banner" title="click to dismiss"></div>
+<nav id="nav"><span id="links" style="display:contents"></span><span id="clock"></span></nav>
+<header>
+  <span id="sym">—</span>
+  <span id="price">—</span>
+  <span id="chg"></span>
+  <span id="state"></span>
+  <span class="meta" id="range"></span>
+  <span class="meta" id="alarmList"></span>
+  <button id="addAlarm" title="add an alarm: click a price on the chart (key a)">+ alarm <kbd>a</kbd></button>
+  <div id="ranges"><span id="rangeBtns" style="display:contents"></span>
+    <button id="rangeCfg" title="customize the ranges and how much history is kept">⚙</button></div>
+</header>
+<div id="wrap"><canvas id="c"></canvas><div id="tip"></div><div id="offnote"></div><div id="histnote"></div></div>
+<div id="modalBg"><div id="modal"></div></div>
+<div id="toast"></div>
+<footer><span id="upd"></span> · <kbd>`</kbd> next stock, <kbd>~</kbd> previous · <kbd>#</kbd> longer range, <kbd>@</kbd> shorter · <kbd>a</kbd> add alarm · click to add a marker · drag to measure · <kbd>g</kbd><kbd>p</kbd> / <kbd>g</kbd><kbd>n</kbd> previous / next period · <kbd>?</kbd> help · <span id="stale"></span></footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d'), wrap = $('wrap'), tip = $('tip');
+const params = new URLSearchParams(location.search);
+let SYM = (params.get('s') || '').toUpperCase();
+let sel = null, MK = [];   // drag selection: {t0, t1, dragging} as times, so it survives redraws; prices come from the line
+let D = null, H = null, M = null, hoverX = null, dismissedAt = 0;
+// ranges: label -> minutes. 'Day' = one whole session. Ranges of a day or more lay 1-minute bars side by side.
+const UNITS = {m: [1, 'm'], min: [1, 'm'], minute: [1, 'm'], h: [60, 'h'], hr: [60, 'h'], hour: [60, 'h'],
+  d: [1440, 'd'], day: [1440, 'd'], w: [10080, 'W'], wk: [10080, 'W'], week: [10080, 'W'],
+  mo: [43200, 'mo'], mon: [43200, 'mo'], month: [43200, 'mo']};
+function parseRange(t) {
+  t = String(t || '').trim();
+  if (t.toLowerCase() === 'day') return {label: 'Day', minutes: 390, day: true};
+  const m = t.match(/^(\d+)\s*([a-zA-Z]+?)s?$/), u = m && UNITS[m[2].toLowerCase()];
+  if (!u || +m[1] < 1) return null;
+  return {label: +m[1] + u[1], minutes: +m[1] * u[0], day: false};
+}
+let RANGES = ['5m', '15m', '20m', '30m', '45m', '1h', 'Day', '1W', '4W'], HISTDAYS = 28;   // settings.js replaces these
+let rangeLabel = (parseRange(params.get('r')) || {label: 'Day'}).label;
+let viewEnd = null;   // looking back in history: the shown window ends here (ms); null = live
+const Q = {};
+
+const fmt = (v, d = 2) => v == null ? '—' : v.toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
+const hhmm = (t, sec) => new Date(t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second: sec ? '2-digit' : undefined});
+const when = t => {
+  if (!t) return '';
+  const d = new Date(t), today = new Date().toDateString() === d.toDateString();
+  const s = Math.round((Date.now() - t) / 1000);
+  const rel = s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 172800 ? `${(s / 3600).toFixed(1)}h ago` : `${Math.round(s / 86400)}d ago`;
+  return `${today ? hhmm(t) : d.toLocaleDateString([], {day: 'numeric', month: 'short'}) + ' ' + hhmm(t)} (${rel})`;
+};
+const entryOf = s => (window.SYMBOLS || []).find(e => e.symbol === s);
+
+// Every file is a <script> that calls back into the page: works over file://, where fetch() doesn't.
+function load(src) {
+  const s = document.createElement('script');
+  s.src = src + '?t=' + Date.now();
+  s.onload = s.onerror = () => s.remove();
+  document.head.appendChild(s);
+}
+window.onFeed = d => {
+  if (d.symbol !== SYM) return;
+  D = d;
+  if (!H || H.version !== d.histVersion) load(`hist-${SYM}.js`);
+  const last = d.points.length ? d.points[d.points.length - 1][1] : null;
+  Q[SYM] = {symbol: SYM, price: last, prevClose: d.prevClose, state: d.state, every: d.every, updated: d.updated,
+            alarmHit: last != null && d.alarms.some(a => a.op === '>=' ? last >= a.price : last <= a.price)};
+  navRender(); render();
+};
+window.onHist = h => { if (h.symbol === SYM) { H = h; draw(); } };
+window.onQuote = q => { Q[q.symbol] = q; navRender(); };
+window.onMarket = m => { M = m; };
+
+// what a company's tracking looks like right now
+function stateOf(sym) {
+  const e = entryOf(sym), q = Q[sym];
+  if (e && !e.tracking) return {k: 'off', text: `not tracking · stopped ${when(e.since)}`};
+  if (!q) return {k: 'off', text: 'no data yet'};
+  if (q.state === 'closed') return {k: 'closed', text: 'market closed · not tracking'};
+  if (q.state === 'waiting') return {k: 'wait', text: 'waiting for the open'};
+  if (q.state === 'stopped') return {k: 'off', text: `not tracking · last price ${when(q.updated)}`};
+  if (Date.now() - q.updated > Math.max(30000, 4000 * (q.every || 5)))
+    return {k: 'off', text: `not tracking · tracker stopped ${when(q.updated)}`};
+  return {k: 'live', text: `● live · every ${q.every}s`};
+}
+
+const curRange = () => rangeLabel;
+function navRender() {
+  const syms = (window.SYMBOLS || []).map(e => e.symbol);
+  $('links').innerHTML = syms.map(s => {
+    const q = Q[s], st = stateOf(s);
+    const ch = q && q.price != null && q.prevClose ? (q.price - q.prevClose) / q.prevClose * 100 : null;
+    const cls = ch == null ? '' : ch >= 0 ? 'up' : 'down';
+    return `<a href="index.html?s=${s}&r=${curRange()}" title="${st.text}"
+      class="${s === SYM ? 'on' : ''} ${q && q.alarmHit ? 'alarm' : ''} ${st.k === 'live' ? '' : 'off'}">
+      <span class="dot ${st.k}">${st.k === 'live' ? '●' : st.k === 'off' ? '○' : '◐'}</span>
+      <b>${s}</b><span class="p">${q && q.price != null ? fmt(q.price) : '…'}</span>
+      <span class="${cls}">${ch == null ? '' : (ch >= 0 ? '+' : '') + fmt(ch) + '%'}</span></a>`;
+  }).join('');
+}
+
+function pollAll() {
+  load('symbols.js');
+  (window.SYMBOLS || []).forEach(e => e.symbol !== SYM && load(`quote-${e.symbol}.js`));
+}
+load('symbols.js'); load('market.js'); loadApi(); setInterval(loadApi, 15000);
+const boot = setInterval(() => {               // wait for the list, then pick the stock to show
+  if (!window.SYMBOLS) return;
+  clearInterval(boot);
+  if (!SYM || !entryOf(SYM)) {
+    SYM = SYMBOLS.length ? SYMBOLS[0].symbol : '';
+    history.replaceState(null, '', `index.html?s=${SYM}&r=${curRange()}`);
+  }
+  load(`data-${SYM}.js`); load(`hist-${SYM}.js`); pollAll();
+  setInterval(() => load(`data-${SYM}.js`), 2000);
+  setInterval(pollAll, 3000);
+  setInterval(() => load('market.js'), 30000);
+}, 50);
+
+// ---------------------------------------------------------------- market clock
+// Yahoo's own session times (market.js) when they cover now; otherwise the NYSE calendar.
+const HOLIDAYS = new Set(['2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25','2026-06-19','2026-07-03',
+  '2026-09-07','2026-11-26','2026-12-25','2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+  '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24']);
+const EARLY_CLOSE = new Set(['2026-11-27','2026-12-24','2027-11-26']);   // 13:00 New York
+const NYF = new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric',
+  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'});
+const nyParts = ms => Object.fromEntries(NYF.formatToParts(new Date(ms)).map(x => [x.type, +x.value || x.value]));
+function nyMs(y, m, d, h, mi) {                // New York wall time -> epoch ms
+  const g = Date.UTC(y, m - 1, d, h, mi), p = nyParts(g);
+  return g - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - g);
+}
+function calendarSession(now) {
+  const p = nyParts(now);
+  for (let k = 0; k < 12; k++) {
+    const day = new Date(Date.UTC(p.year, p.month - 1, p.day + k));
+    const y = day.getUTCFullYear(), m = day.getUTCMonth() + 1, d = day.getUTCDate(), wd = day.getUTCDay();
+    const key = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (wd === 0 || wd === 6 || HOLIDAYS.has(key)) continue;
+    const s = {start: nyMs(y, m, d, 9, 30), end: nyMs(y, m, d, EARLY_CLOSE.has(key) ? 13 : 16, 0), early: EARLY_CLOSE.has(key)};
+    if (s.end > now) return s;
+  }
+}
+const dur = ms => {
+  const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+function clock() {
+  const now = Date.now();
+  const s = M && M.end * 1000 > now ? {start: M.start * 1000, end: M.end * 1000} : calendarSession(now);
+  if (!s) { $('clock').textContent = ''; return; }
+  const open = now >= s.start;
+  $('clock').className = open && s.end - now < 15 * 60000 ? 'soon' : '';
+  $('clock').innerHTML = open
+    ? `market closes in <b>${dur(s.end - now)}</b>${s.early ? ' (early close)' : ''}`
+    : `market opens in <b>${dur(s.start - now)}</b>`;
+}
+clock(); setInterval(clock, 1000);
+
+// ---------------------------------------------------------------- keys & controls
+function rangeList() {     // the configured ranges, plus the current one if it came from ?r= only
+  const list = RANGES.includes(rangeLabel) ? [...RANGES] : [...RANGES, rangeLabel];
+  return list.sort((a, b) => parseRange(a).minutes - parseRange(b).minutes);
+}
+function buildRanges() {
+  $('rangeBtns').innerHTML = rangeList().map(l =>
+    `<button class="${l === rangeLabel ? 'on' : ''} ${RANGES.includes(l) ? '' : 'temp'}" data-r="${l}"
+      ${RANGES.includes(l) ? '' : 'title="not in your list: ⚙ to keep it"'}>${l}</button>`).join('');
+  $('rangeBtns').querySelectorAll('button').forEach(b => b.onclick = () => setRange(b.dataset.r));
+}
+function setRange(l) {
+  rangeLabel = l; sel = null; buildRanges(); draw(); navRender();
+  if (SYM) history.replaceState(null, '', `index.html?s=${SYM}&r=${l}`);
+}
+window.onSettings = st => {
+  HISTDAYS = st.days;
+  if (JSON.stringify(st.ranges) !== JSON.stringify(RANGES)) { RANGES = st.ranges; buildRanges(); }
+};
+buildRanges(); load('settings.js'); setInterval(() => load('settings.js'), 15000);
+
+$('rangeCfg').onclick = openRangeSettings;
+function openRangeSettings() {
+  let list = [...RANGES];
+  const chips = () => list.map(l => `<span class="chip">${l}<button data-l="${l}" title="remove">×</button></span>`).join('');
+  modal(`<h3>Ranges</h3>
+    <div class="rchips" id="mChips">${chips()}</div>
+    <label>Add a range</label>
+    <div class="row"><input id="mRange" placeholder="e.g. 2h, 90m, 3d, 2W, 3mo"><button id="mAddR" style="font:inherit;padding:0 14px;border-radius:7px;border:1px solid #333a47;background:#1f232c;color:var(--fg);cursor:pointer">Add</button></div>
+    <label>History kept (days)</label>
+    <input id="mDays" type="number" min="1" max="730" value="${HISTDAYS}" style="width:120px">
+    <div class="hint">m minutes · h hours · Day a whole session · d days · W weeks · mo months.
+      Past 29 days Yahoo has 5-minute prices; past 59 days hourly ones.</div>
+    <div class="err"></div>
+    <div class="btns"><button data-cancel>Cancel</button><button class="primary" data-ok>Save</button></div>`,
+    async () => {
+      const add = list.filter(l => !RANGES.includes(l)), remove = RANGES.filter(l => !list.includes(l));
+      const days = parseInt($('mDays').value);
+      if (!list.length) throw new Error('Keep at least one range.');
+      const j = await api('/settings', {add, remove, days});
+      RANGES = j.ranges; HISTDAYS = j.days;
+      if (!RANGES.includes(rangeLabel)) rangeLabel = RANGES.includes('Day') ? 'Day' : RANGES[0];
+      buildRanges(); draw();
+      toast('Ranges saved' + (j.note ? ` — ${esc(j.note)}` : ''));
+    });
+  const wire = () => $('mChips').querySelectorAll('button').forEach(b => b.onclick = () => {
+    list = list.filter(l => l !== b.dataset.l); $('mChips').innerHTML = chips(); wire(); });
+  wire();
+  const addOne = () => {
+    const r = parseRange($('mRange').value);
+    $('modal').querySelector('.err').textContent = r ? '' : 'Not a range: try 2h, 90m, 3d, 2W or 3mo.';
+    if (!r) return;
+    if (!list.includes(r.label)) list.push(r.label);
+    list.sort((a, b) => parseRange(a).minutes - parseRange(b).minutes);
+    $('mChips').innerHTML = chips(); wire(); $('mRange').value = ''; $('mRange').focus();
+  };
+  $('mAddR').onclick = addOne;
+  $('mRange').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addOne(); } };
+  $('mRange').focus();
+}
+
+// ---------------------------------------------------------------- moving through history
+function allPoints() {       // earlier days at 1 point per minute, then every price of the session
+  const h = H ? H.bars : [], today = D ? D.points : [];
+  const cut = today.length ? today[0][0] : Infinity;
+  return h.filter(p => p[0] < cut).concat(today);
+}
+const lastAtOrBefore = (a, t) => { let lo = -1, hi = a.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; a[m][0] <= t ? lo = m : hi = m - 1; } return lo; };
+function sessionBounds(a, i) {   // a session is a run of prices without a gap of 3 hours or more
+  let s = i, e = i;
+  while (s > 0 && a[s][0] - a[s - 1][0] < 3 * 3600000) s--;
+  while (e < a.length - 1 && a[e + 1][0] - a[e][0] < 3 * 3600000) e++;
+  return [s, e];
+}
+function step(dir) {
+  if (!D) return;
+  const r = parseRange(rangeLabel), a = allPoints();
+  if (a.length < 2) return;
+  const tEnd = a[a.length - 1][0];
+  let E = viewEnd ?? tEnd;
+  if (r.day) {
+    const [s, e] = sessionBounds(a, Math.max(0, lastAtOrBefore(a, E)));
+    if (dir < 0) { if (s === 0) return toast('That’s the start of the stored history.'); E = a[s - 1][0]; }
+    else { if (e >= a.length - 1) E = tEnd; else E = a[sessionBounds(a, e + 1)[1]][0]; }
+  } else {
+    const R = r.minutes * 60000;
+    if (dir < 0) {
+      let nE = E - R, i = lastAtOrBefore(a, nE);
+      if (i < 0) return toast('That’s the start of the stored history.');
+      if (a[i][0] <= nE - R) nE = a[i][0];          // nothing traded there: jump to the last price before it
+      E = nE;
+    } else {
+      const j = lastAtOrBefore(a, E) + 1;
+      if (j >= a.length) E = tEnd;
+      else E = a[j][0] <= E + R ? E + R : a[j][0] + R - 1;   // nothing next: start at the next price
+    }
+  }
+  viewEnd = E >= tEnd ? null : E;
+  sel = null; draw();
+}
+function toLive() { viewEnd = null; sel = null; draw(); }
+let gAt = 0;   // g was pressed: the next key picks the move (gn, gp, gl)
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.altKey || e.metaKey || modalOpen) return;
+  if (gAt && Date.now() - gAt < 1500) {
+    gAt = 0;
+    if (e.key === 'p') return step(-1);
+    if (e.key === 'n') return step(1);
+    if (e.key === 'l') return toLive();
+  }
+  if (e.key === 'g') { gAt = Date.now(); return; }
+  if (e.key === '?') { showHelp(); return; }
+  if (e.key === 'a' || e.key === 'A') { setAddMode(!addMode); return; }
+  if (e.key === 'Escape' && addMode) { setAddMode(false); return; }
+  if (e.key === 'Escape' && sel) { sel = null; draw(); return; }
+  if (e.key === '@' || e.key === '#') {                    // shorter / longer range, stops at the ends
+    const list = rangeList(), i = list.indexOf(rangeLabel);
+    const j = Math.max(0, Math.min(list.length - 1, i + (e.key === '#' ? 1 : -1)));
+    if (j !== i) setRange(list[j]);
+  } else if (e.key === '`' || e.key === '~') {             // next / previous stock, wraps around
+    const syms = (window.SYMBOLS || []).map(x => x.symbol), i = syms.indexOf(SYM);
+    const next = syms[(i + (e.key === '`' ? 1 : -1) + syms.length) % syms.length];
+    if (next && next !== SYM) location.href = `index.html?s=${next}&r=${curRange()}`;
+  }
+});
+cv.addEventListener('mousedown', e => {
+  if (addMode || e.button !== 0 || !SC) return;
+  const px = Math.max(SC.L, Math.min(SC.L + SC.pw, e.offsetX)), py = Math.max(SC.T, Math.min(SC.T + SC.ph, e.offsetY));
+  const t = SC.tAt(px);
+  sel = {t0: t, t1: t, dragging: true, x0: e.offsetX, y0: e.offsetY, had: !!sel};
+  e.preventDefault();
+});
+window.addEventListener('mouseup', e => {
+  if (!sel || !sel.dragging) return;
+  sel.dragging = false;
+  const r = cv.getBoundingClientRect();
+  if (Math.abs(e.clientX - r.left - sel.x0) < 4 && Math.abs(e.clientY - r.top - sel.y0) < 4) {   // a click, not a drag
+    const had = sel.had, x0 = sel.x0, y0 = sel.y0;
+    sel = null;
+    if (!had) {                       // with a selection, a click only clears it; otherwise it's about markers
+      const hitM = MK.find(k => Math.hypot(k.x - x0, k.y - y0) < 9 ||
+                               (x0 >= k.bx && x0 <= k.bx + k.bw && y0 >= k.by && y0 <= k.by + k.bh));
+      if (hitM) openMarker(hitM.m);
+      else if (SC) { const p = SC.pointAt(x0); if (p) openMarker(null, p); }
+    }
+  }
+  draw();
+});
+cv.addEventListener('mousemove', e => {
+  hoverX = e.offsetX; hoverY = e.offsetY;
+  if (sel && sel.dragging && SC) {
+    const px = Math.max(SC.L, Math.min(SC.L + SC.pw, e.offsetX)), py = Math.max(SC.T, Math.min(SC.T + SC.ph, e.offsetY));
+    sel.t1 = SC.tAt(px);
+  }
+  draw();
+});
+cv.addEventListener('mouseleave', () => { hoverX = hoverY = null; tip.style.display = 'none'; draw(); });
+$('banner').onclick = () => { dismissedAt = Date.now(); $('banner').style.display = 'none'; };
+new ResizeObserver(draw).observe(wrap);
+
+// ---------------------------------------------------------------- alarm editing
+const span = ms => { const s = Math.round(Math.abs(ms) / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600),
+                     m = Math.floor(s % 3600 / 60);
+                     return d ? `${d}d ${h}h` : h ? `${h}h ${String(m).padStart(2, '0')}m` : m ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`; };
+let addMode = false, hoverY = null, SC = null, alarmSig = '', modalOpen = false;
+const esc = t => String(t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+const priceAt = py => { const v = SC.hi - (py - SC.T) / SC.ph * (SC.hi - SC.lo);
+                        const step = SC.hi - SC.lo > 20 ? 0.25 : SC.hi - SC.lo > 4 ? 0.05 : 0.01;
+                        return Math.round(v / step) * step; };
+const alarmNear = py => D && SC && D.alarms.find(a => Math.abs(SC.T + (SC.hi - a.price) / (SC.hi - SC.lo) * SC.ph - py) < 6);
+const lastPrice = () => D && D.points.length ? D.points[D.points.length - 1][1] : null;
+window.API = undefined;
+function loadApi() { load('api.js'); }
+
+function setAddMode(on) {
+  addMode = on;
+  const b = $('addAlarm');
+  b.classList.toggle('on', on);
+  b.style.background = on ? acol(D ? D.alarms.length : 0) : '';
+  b.style.borderColor = on ? acol(D ? D.alarms.length : 0) : '';
+  wrap.classList.toggle('adding', on);
+  if (on && !window.API) toast('The tracker is not running, so alarms can’t be saved from here. Start it with <code>stock start</code>.');
+  draw();
+}
+$('addAlarm').onclick = () => setAddMode(!addMode);
+cv.addEventListener('click', e => {
+  if (!addMode || !D || !SC) return;
+  const over = alarmNear(e.offsetY);
+  if (over) confirmRemove(over); else openAdd(priceAt(e.offsetY));
+});
+
+function modal(html, onOk) {
+  $('modal').innerHTML = html;
+  $('modalBg').style.display = 'flex'; modalOpen = true;
+  const close = () => { $('modalBg').style.display = 'none'; modalOpen = false; };
+  const ok = async () => {
+    $('modal').querySelector('.err').textContent = '';
+    try { await onOk(); close(); } catch (err) { $('modal').querySelector('.err').textContent = err.message; }
+  };
+  $('modal').querySelector('[data-cancel]').onclick = close;
+  $('modal').querySelector('[data-ok]').onclick = ok;
+  $('modal').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ok(); } if (e.key === 'Escape') close(); };
+  $('modalBg').onclick = e => { if (e.target === $('modalBg')) close(); };
+  ($('modal').querySelector('input') || $('modal').querySelector('[data-ok]')).focus();
+  $('modal').querySelector('input')?.select();
+}
+
+function openAdd(price) {
+  const up = price >= (lastPrice() ?? price), c = acol(D.alarms.length);
+  const words = op => `${SYM} ${op === '>=' ? 'reached' : 'dropped below'} ${+price.toFixed(2)}`;
+  modal(`<h3><span class="sw" style="background:${c}"></span>New alarm · ${SYM}</h3>
+    <label>When ${SYM} (now ${fmt(lastPrice())})</label>
+    <div class="row"><select id="mOp"><option value=">=" ${up ? 'selected' : ''}>rises to</option>
+      <option value="<=" ${up ? '' : 'selected'}>falls to</option></select>
+      <input id="mPrice" type="number" step="0.01" value="${price.toFixed(2)}"></div>
+    <label>Say out loud</label>
+    <input id="mSay" maxlength="100" value="${esc(words(up ? '>=' : '<='))}">
+    <div class="hint">Enter saves · Esc cancels</div>
+    <div class="err"></div>
+    <div class="btns"><button data-cancel>Cancel</button><button class="primary" data-ok>Set alarm</button></div>`,
+    async () => {
+      const op = $('mOp').value, p = parseFloat($('mPrice').value);
+      if (!(p > 0)) throw new Error('Enter a price.');
+      await api('/alarm', {op, price: p, say: $('mSay').value.trim() || words(op)});
+      toast(`Alarm set: ${op === '>=' ? '≥' : '≤'} ${fmt(p)}`);
+    });
+  // keep the suggested words in step with the direction while they're untouched
+  let touched = false;
+  $('mSay').oninput = () => touched = true;
+  $('mOp').onchange = () => { if (!touched) $('mSay').value = words($('mOp').value); };
+  $('mSay').focus(); $('mSay').select();
+}
+
+function confirmRemove(a) {
+  const i = D.alarms.indexOf(a);
+  modal(`<h3><span class="sw" style="background:${acol(i)}"></span>Remove alarm · ${SYM}</h3>
+    <div>${a.op === '>=' ? 'rises to' : 'falls to'} <b>${fmt(a.price)}</b> — says “${esc(a.say)}”</div>
+    <div class="err"></div>
+    <div class="btns"><button data-cancel>Cancel</button><button class="danger" data-ok>Remove</button></div>`,
+    () => removeAlarm(a));
+}
+
+async function removeAlarm(a) {
+  await api('/alarm/remove', {op: a.op, price: a.price});
+  toast(`Removed ${a.op === '>=' ? '≥' : '≤'} ${fmt(a.price)}`, 'Undo', () => api('/alarm', {op: a.op, price: a.price, say: a.say}));
+}
+
+async function api(path, body) {
+  if (!window.API) throw new Error('The tracker is not running, so this can’t be saved. Start it with: stock start');
+  let r;
+  try {
+    r = await fetch(window.API.url + path, {method: 'POST', body: JSON.stringify({...body, symbol: SYM, token: window.API.token})});
+  } catch (e) { loadApi(); throw new Error('Can’t reach the tracker. Is it running? (stock status)'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { loadApi(); throw new Error(j.error || `error ${r.status}`); }
+  if (j.alarms) D.alarms = j.alarms.map(a => ({...a, hits: (D.alarms.find(x => x.op === a.op && x.price === a.price) || {}).hits || []}));
+  if (j.markers && entryOf(SYM)) entryOf(SYM).markers = j.markers;
+  render();
+  if (addMode) setAddMode(true);
+  return j;
+}
+
+function openMarker(m, p) {
+  const isNew = !m, t = isNew ? p[0] : m.t, price = isNew ? p[1] : m.price;
+  const when = new Date(t).toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'}) + ' ' + hhmm(t, true);
+  modal(`<h3><span class="sw" style="background:#4da3ff;border-radius:50%;width:12px;height:12px"></span>
+      ${isNew ? 'New marker' : 'Marker'} · ${SYM}</h3>
+    <div class="meta">${when}</div>
+    <label>Label</label>
+    <input id="mLabel" maxlength="80" value="${esc(isNew ? 'bought' : m.label)}">
+    <label>Price</label>
+    <input id="mMPrice" type="number" step="0.01" value="${(+price).toFixed(2)}" style="width:160px">
+    <div class="hint">Enter saves · Esc cancels · the price starts at the line; change it to what you paid</div>
+    <div class="err"></div>
+    <div class="btns">${isNew ? '' : '<button class="danger" id="mDel" style="margin-right:auto">Delete</button>'}
+      <button data-cancel>Cancel</button><button class="primary" data-ok>${isNew ? 'Add marker' : 'Save'}</button></div>`,
+    async () => {
+      const pr = parseFloat($('mMPrice').value);
+      if (!(pr > 0)) throw new Error('Enter a price.');
+      await api('/marker', {t, price: pr, label: $('mLabel').value.trim() || 'marker'});
+      toast(isNew ? 'Marker added' : 'Marker saved');
+    });
+  if (!isNew) $('mDel').onclick = async () => {
+    try {
+      await api('/marker/remove', {t});
+      $('modal').querySelector('[data-cancel]').click();
+      toast('Marker deleted', 'Undo', () => api('/marker', {t, price: m.price, label: m.label}));
+    } catch (err) { $('modal').querySelector('.err').textContent = err.message; }
+  };
+  $('mLabel').focus(); $('mLabel').select();
+}
+
+function showHelp() {
+  const k = (...keys) => keys.map(x => `<kbd>${x}</kbd>`).join(' ');
+  modal(`<h3>Keyboard</h3><table class="keys">
+    <tr><td>${k('`')} ${k('~')}</td><td>next / previous stock</td></tr>
+    <tr><td>${k('#')} ${k('@')}</td><td>longer / shorter range</td></tr>
+    <tr><td>${k('g', 'p')} ${k('g', 'n')}</td><td>previous / next period of the current range (look back in history)</td></tr>
+    <tr><td>${k('g', 'l')}</td><td>back to live</td></tr>
+    <tr><td>${k('a')}</td><td>add-alarm mode on / off: click a price to set an alarm, click an alarm line to remove it</td></tr>
+    <tr><td>${k('Esc')}</td><td>leave add-alarm mode, clear the selection</td></tr>
+    <tr><td>click</td><td>add a marker on the line (e.g. “bought”); click a marker to edit or delete it</td></tr>
+    <tr><td>drag</td><td>select a stretch of the line: change, time, high and low</td></tr>
+    <tr><td>⚙</td><td>add or remove ranges (2h, 3d, 3mo…) and set how much history is kept</td></tr>
+    <tr><td>${k('?')}</td><td>this help</td></tr></table>
+    <div class="err"></div>
+    <div class="btns"><button data-cancel style="display:none"></button><button class="primary" data-ok>Close</button></div>`, () => {});
+}
+
+let toastTimer;
+function toast(html, action, fn) {
+  const t = $('toast');
+  t.innerHTML = `<span>${html}</span>` + (action ? `<button>${action}</button>` : '');
+  t.style.display = 'flex';
+  if (action) t.querySelector('button').onclick = async () => { t.style.display = 'none'; try { await fn(); } catch (e) { toast(esc(e.message)); } };
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 6000);
+}
+
+let beeped = false;
+const ACOLS = ['#ff9f1c', '#ffd23f', '#c77dff', '#3bceac', '#ff6b9d'];
+const acol = i => ACOLS[i % ACOLS.length];
+function beep() {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)();
+    [0, .35, .7].forEach(off => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(a.destination);
+      g.gain.setValueAtTime(.25, a.currentTime + off); g.gain.setValueAtTime(0, a.currentTime + off + .2);
+      o.start(a.currentTime + off); o.stop(a.currentTime + off + .25);
+    });
+  } catch (e) {}
+}
+
+// ---------------------------------------------------------------- header
+function render() {
+  if (!D) return;
+  const st = stateOf(SYM);
+  $('state').className = st.k; $('state').textContent = st.text;
+  $('sym').textContent = D.symbol; $('sym').title = D.name || '';
+  const note = $('offnote');
+  if (st.k === 'live') note.style.display = 'none';
+  else {
+    note.style.display = 'block';
+    note.innerHTML = `<b>${st.k === 'closed' ? 'MARKET CLOSED' : st.k === 'wait' ? 'WAITING FOR THE OPEN' : 'NOT TRACKING'}</b>${st.text}` +
+      (st.k === 'off' ? `<br>start it with <code>stock start ${SYM}</code>` : '');
+  }
+  if (!D.points.length) { $('price').textContent = '—'; draw(); return; }
+  const last = D.points[D.points.length - 1][1], ch = last - D.prevClose, pct = ch / D.prevClose * 100;
+  const cls = ch >= 0 ? 'up' : 'down';
+  document.title = `${D.symbol} ${fmt(last)} (${ch >= 0 ? '+' : ''}${fmt(pct)}%)`;
+  $('price').textContent = fmt(last); $('price').className = cls;
+  $('chg').textContent = `${ch >= 0 ? '+' : ''}${fmt(ch)} (${ch >= 0 ? '+' : ''}${fmt(pct)}%)`; $('chg').className = cls;
+  const oc = sessionOC(D.session, D.points);
+  $('range').textContent = `open ${fmt(oc.open)}${oc.close != null ? ' · close ' + fmt(oc.close) : ''} · ` +
+    `low ${fmt(D.low)} · high ${fmt(D.high)} · prev close ${fmt(D.prevClose)}`;
+  const qp = D.quotePrevClose, off = qp && D.prevClose && Math.abs(qp - D.prevClose) / D.prevClose > 0.001;
+  $('range').title = off ? `Yahoo disagrees with itself: its quick quote says the previous close was ${fmt(qp)}, ` +
+    `its daily data and the minute prices say ${fmt(D.prevClose)}. This page uses ${fmt(D.prevClose)}.` : '';
+  if (off) $('range').textContent += ` ⚠ (quote says ${fmt(qp)})`;
+  const sig = JSON.stringify(D.alarms.map(a => [a.op, a.price, a.say]));
+  if (sig !== alarmSig) {                       // rebuild only on change, so the × buttons stay clickable
+    alarmSig = sig;
+    $('alarmList').innerHTML = !D.alarms.length ? 'no alarms' : D.alarms.map((a, i) =>
+      `<span class="chip" title="says “${esc(a.say)}”"><span class="sw" style="background:${acol(i)}"></span>
+       <b style="color:${acol(i)}">${a.op === '>=' ? '≥' : '≤'} ${fmt(a.price)}</b> ${esc(a.say)}
+       <button data-key="${a.op}${a.price}" title="remove this alarm">×</button></span>`).join('');
+    $('alarmList').querySelectorAll('button').forEach(b => b.onclick = () => {
+      const a = D.alarms.find(x => `${x.op}${x.price}` === b.dataset.key);
+      if (a) removeAlarm(a);
+    });
+  }
+  $('upd').textContent = `session ${D.session} · updated ${hhmm(D.updated, true)} · ${D.points.length} prices today`;
+  $('stale').textContent = D.error ? `fetch error: ${D.error}` : '';
+  // banner: the most extreme level currently crossed (only while live)
+  const crossed = st.k !== 'live' ? [] : D.alarms.map((a, i) => ({...a, i}))
+    .filter(a => a.op === '>=' ? last >= a.price : last <= a.price)
+    .sort((a, b) => Math.abs(b.price - D.prevClose) - Math.abs(a.price - D.prevClose));
+  const hit = crossed.length > 0;
+  if (hit) { $('banner').textContent = crossed[0].say.toUpperCase(); $('banner').style.background = acol(crossed[0].i); }
+  $('banner').style.display = hit && Date.now() - dismissedAt > 60000 ? 'block' : 'none';
+  if (hit && !beeped) { beep(); beeped = true; }
+  if (!hit) beeped = false;
+  draw();
+}
+
+// ---------------------------------------------------------------- chart
+const nyDay = t => { const p = nyParts(t); return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`; };
+function sessionOC(day, pts) {   // official open/close (Yahoo daily) of a session; close only once it's over
+  const oc = (D.daily || {})[day];
+  const over = day !== nyDay(Date.now()) || (M && Date.now() > M.end * 1000 && nyDay(M.end * 1000) === day);
+  return {open: oc ? oc[0] : pts && pts.length ? pts[0][1] : null, close: over ? (oc ? oc[1] : pts && pts.length ? pts[pts.length - 1][1] : null) : null};
+}
+
+let minsCache = {key: '', pts: []};
+function series() {
+  // intraday ranges: real time on x. ranges of a day or more: 1-minute bars side by side,
+  // so nights and weekends take no space. viewEnd moves the window back into history.
+  const r = parseRange(rangeLabel) || parseRange('Day');
+  const a = allPoints();
+  const tEnd = a.length ? a[a.length - 1][0] : Date.now();
+  const E = viewEnd ?? tEnd, live = viewEnd == null;
+  const multi = !r.day && r.minutes >= 1440;
+  let src = a;
+  if (multi) {          // today's prices one per minute, like the older days
+    const key = `${a.length}-${tEnd}`;
+    if (minsCache.key !== key) {
+      const m = []; let lastMin = -1;
+      for (const p of a) { const mm = Math.floor(p[0] / 60000); if (mm === lastMin) m[m.length - 1] = p; else m.push(p); lastMin = mm; }
+      minsCache = {key, pts: m};
+    }
+    src = minsCache.pts;
+  }
+  let pts;
+  if (r.day) {
+    const i = lastAtOrBefore(src, E);
+    const [s0, e0] = i < 0 ? [0, -1] : sessionBounds(src, i);
+    pts = src.slice(s0, e0 + 1);
+  } else {
+    const R = r.minutes * 60000;
+    pts = src.slice(lastAtOrBefore(src, E - R) + 1, lastAtOrBefore(src, E) + 1);
+  }
+  if (pts.length < 2) pts = src.slice(Math.max(0, lastAtOrBefore(src, E) - 1), lastAtOrBefore(src, E) + 1);
+  return {pts, vx: multi ? pts.map((p, i) => i) : pts.map(p => p[0]), multi, r, live, today: live && r.day};
+}
+
+let histSig = '';
+function histNote(atLive, pts, multi) {
+  const sig = atLive ? '' : `${rangeLabel}-${pts[0][0]}-${pts[pts.length - 1][0]}`;
+  if (sig === histSig) return;
+  histSig = sig;
+  const el = $('histnote');
+  if (atLive) { el.style.display = 'none'; return; }
+  const f = t => new Date(t).toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'}) + ' ' + hhmm(t);
+  el.innerHTML = `history · ${f(pts[0][0])} → ${f(pts[pts.length - 1][0])} · <kbd>g</kbd><kbd>p</kbd> / <kbd>g</kbd><kbd>n</kbd>
+    <button title="g l">back to live ▶▶</button>`;
+  el.querySelector('button').onclick = toLive;
+  el.style.display = 'flex';
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1, W = wrap.clientWidth, Hh = wrap.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== Hh * dpr) { cv.width = W * dpr; cv.height = Hh * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, Hh);
+  if (!D) return;
+
+  const {pts, vx, multi, r, live: atLive, today} = series();
+  histNote(atLive, pts, multi);
+  const n = pts.length;
+  if (n < 2) return;
+  const v0 = vx[0], v1 = Math.max(vx[n - 1], v0 + 1);
+
+  let lo = Infinity, hi = -Infinity;
+  for (const p of pts) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; }
+  for (const a of D.alarms) {      // keep alarm lines in view when they're reasonably close
+    if (a.price > hi && a.price - hi < (hi - lo) * 0.6 + 3) hi = a.price;
+    if (a.price < lo && lo - a.price < (hi - lo) * 0.6 + 3) lo = a.price;
+  }
+  if (today && D.prevClose) { lo = Math.min(lo, D.prevClose); hi = Math.max(hi, D.prevClose); }
+  // the session shown (intraday views): its official open, and close once it's over
+  const oc = multi ? null : sessionOC(nyDay(pts[n - 1][0]), r.day ? pts : null);
+  if (oc && r.day) for (const v of [oc.open, oc.close]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const pad = (hi - lo) * 0.08 || 0.5; lo -= pad; hi += pad;
+
+  const L = 10, R = 70, T = 12, B = 26, pw = W - L - R, ph = Hh - T - B;
+  const x = v => L + (v - v0) / (v1 - v0) * pw;
+  const y = v => T + (hi - v) / (hi - lo) * ph;
+  const xi = i => x(vx[i]);
+  const near = t => { let a = 0, b = n - 1; while (b - a > 1) { const m = (a + b) >> 1; (pts[m][0] <= t ? a = m : b = m); }
+                      return Math.abs(pts[a][0] - t) <= Math.abs(pts[b][0] - t) ? a : b; };
+  // pixel <-> (time, price) for this view; multi-day views place points by index
+  const tx = t => multi ? xi(near(t)) : x(t);
+  const tAt = px => { const vv = v0 + (px - L) / pw * (v1 - v0);
+                      return multi ? pts[Math.max(0, Math.min(n - 1, Math.round(vv)))][0] : vv; };
+  const pointAt = px => { const t = tAt(px); return pts[near(t)]; };
+  SC = {lo, hi, T, ph, L, pw, R, tAt, pointAt};
+
+  ctx.font = '12px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+  const raw = (hi - lo) / 8, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    ctx.strokeStyle = '#262a33'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, Math.round(y(v)) + .5); ctx.lineTo(L + pw, Math.round(y(v)) + .5); ctx.stroke();
+    ctx.fillStyle = '#8a90a0'; ctx.textAlign = 'left'; ctx.fillText(fmt(v, step < 1 ? 2 : 0), L + pw + 8, y(v));
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const vline = (px, label) => {
+    ctx.strokeStyle = '#1d2129';
+    ctx.beginPath(); ctx.moveTo(Math.round(px) + .5, T); ctx.lineTo(Math.round(px) + .5, T + ph); ctx.stroke();
+    if (label) { ctx.fillStyle = '#8a90a0'; ctx.fillText(label, Math.max(px, L + ctx.measureText(label).width / 2), T + ph + 7); }
+  };
+  if (multi) {
+    let lastDay = '', lastLabelX = -1e9;
+    pts.forEach((p, i) => {
+      const day = new Date(p[0]).toDateString();
+      if (day === lastDay) return;
+      lastDay = day;
+      const px = xi(i), show = px - lastLabelX > 46;
+      if (show) lastLabelX = px;
+      vline(px, show ? new Date(p[0]).toLocaleDateString([], {weekday: 'short', day: 'numeric'}) : '');
+    });
+  } else {
+    const spanMin = (v1 - v0) / 60000;
+    const tStep = [1, 2, 5, 10, 15, 30, 60, 120].find(s => spanMin / s <= 9) * 60000;
+    for (let t = Math.ceil(v0 / tStep) * tStep; t <= v1; t += tStep) vline(x(t), hhmm(t));
+  }
+
+  // session opens and closes: a dotted vertical line at each, labelled with the official price when there's room
+  {
+    const runs = []; let s0 = 0;
+    for (let i = 1; i <= n; i++) if (i === n || pts[i][0] - pts[i - 1][0] >= 3 * 3600000) { runs.push([s0, i - 1]); s0 = i; }
+    const lastLab = {open: -1e9, close: -1e9};
+    const vmark = (px, color, kind, label) => {
+      if (px < L - 1 || px > L + pw + 1) return;
+      ctx.save(); ctx.strokeStyle = color; ctx.globalAlpha = .75; ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Math.round(px) + .5, T); ctx.lineTo(Math.round(px) + .5, T + ph); ctx.stroke(); ctx.restore();
+      ctx.font = '11px system-ui, sans-serif';
+      const w = ctx.measureText(label).width + 8;
+      if (px - lastLab[kind] < w + 6) return;      // labels too close: line only
+      lastLab[kind] = px;
+      const ly = T + ph - (kind === 'open' ? 30 : 14);
+      const lx = kind === 'open' ? Math.min(px + 2, L + pw - w) : Math.max(px - w - 2, L);
+      ctx.fillStyle = '#0f1115d0'; ctx.fillRect(lx, ly - 7, w, 14);
+      ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, lx + 4, ly);
+    };
+    for (const [a, b] of runs) {
+      const day = nyDay(pts[a][0]), [Y, Mo, Dd] = day.split('-').map(Number), oc = (D.daily || {})[day];
+      const openT = nyMs(Y, Mo, Dd, 9, 30), closeT = nyMs(Y, Mo, Dd, EARLY_CLOSE.has(day) ? 13 : 16, 0);
+      const over = sessionOC(day).close != null;
+      // multi-day views place points by index: the session's first and last point stand for open and close
+      // (the last 1-minute bar is stamped 15:59, so allow a couple of minutes at the window's edges)
+      const xo = multi ? xi(a) : Math.max(L, x(openT)), xc = multi ? xi(b) : Math.min(L + pw, x(closeT));
+      const showOpen = multi ? pts[a][0] - openT < 5 * 60000 : openT >= v0 - 120000 && openT <= v1;
+      const showClose = over && (multi ? closeT - pts[b][0] < 5 * 60000 : closeT >= v0 && closeT <= v1 + 120000);
+      if (showOpen) vmark(xo, '#7aa2c8', 'open', `open${oc ? ' ' + fmt(oc[0]) : ''}`);
+      if (showClose) vmark(xc, '#d7c48a', 'close', `close${oc ? ' ' + fmt(oc[1]) : ''}`);
+    }
+  }
+
+  const labelYs = [];   // skip a label that would sit on top of another; the line still shows
+  const hline = (v, color, label, dash) => {
+    if (v < lo || v > hi) return;
+    if (labelYs.some(ly => Math.abs(ly - y(v)) < 14)) label = '';
+    else labelYs.push(y(v));
+    ctx.save(); ctx.setLineDash(dash); ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(L, y(v)); ctx.lineTo(L + pw, y(v)); ctx.stroke(); ctx.restore();
+    if (!label) return;
+    ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#0f1115d0'; ctx.fillRect(L + 3, y(v) - 17, ctx.measureText(label).width + 6, 14);
+    ctx.fillStyle = color; ctx.fillText(label, L + 6, y(v) - 3);
+  };
+  if (today && D.prevClose) hline(D.prevClose, '#8a90a0', `prev close ${fmt(D.prevClose)}`, [4, 4]);
+  if (oc && oc.open != null) hline(oc.open, '#7aa2c8', `open ${fmt(oc.open)}`, [2, 3]);
+  if (oc && oc.close != null) hline(oc.close, '#d7c48a', `close ${fmt(oc.close)}`, [2, 3]);
+  D.alarms.forEach((a, i) => hline(a.price, acol(i), `${a.op === '>=' ? '≥' : '≤'} ${fmt(a.price)}  “${a.say}”`, [8, 5]));
+
+  const last = pts[n - 1][1], ref = !multi && atLive && D.prevClose ? D.prevClose : pts[0][1];
+  const live = stateOf(SYM).k === 'live';
+  const col = !live ? '#8a90a0' : last >= ref ? '#2fbf71' : '#f0524f';
+  const grad = ctx.createLinearGradient(0, T, 0, T + ph);
+  grad.addColorStop(0, col + '40'); grad.addColorStop(1, col + '00');
+  const path = () => { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(xi(i), y(p[1])) : ctx.moveTo(xi(i), y(p[1]))); };
+  path(); ctx.lineTo(xi(n - 1), T + ph); ctx.lineTo(xi(0), T + ph); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  path(); ctx.strokeStyle = col; ctx.lineWidth = multi ? 1.2 : 1.6; ctx.lineJoin = 'round'; ctx.stroke();
+
+  D.alarms.forEach((a, i) => a.hits.forEach(([t, v]) => { if (t >= pts[0][0]) {
+    ctx.fillStyle = acol(i); ctx.beginPath(); ctx.arc(multi ? xi(near(t)) : x(t), y(v), 5, 0, 7); ctx.fill(); } }));
+
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(xi(n - 1), y(last), 3.5, 0, 7); ctx.fill();
+  ctx.fillRect(L + pw + 2, y(last) - 10, R - 4, 20);
+  ctx.fillStyle = '#0f1115'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 12px system-ui, sans-serif'; ctx.fillText(fmt(last), L + pw + 7, y(last));
+
+  if (multi) {
+    const chg = last - pts[0][1], pc = chg / pts[0][1] * 100;
+    ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = col;
+    ctx.fillText(`${r.label}: ${chg >= 0 ? '+' : ''}${fmt(chg)} (${chg >= 0 ? '+' : ''}${fmt(pc)}%)  from ${fmt(pts[0][1])}`, L + 6, T + 4);
+  }
+
+  // markers: notes pinned to the line (e.g. where you bought)
+  MK = [];
+  const ms = (entryOf(SYM) || {}).markers || [];
+  ctx.save(); ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+  for (const m of ms) {
+    if (m.t < pts[0][0] - 60000 || m.t > pts[n - 1][0] + 60000) continue;
+    const mx = tx(m.t), my = Math.max(T + 4, Math.min(T + ph - 4, y(m.price)));
+    const text = `${m.label} · ${fmt(m.price)}`;
+    ctx.font = '12px system-ui, sans-serif';
+    const bw = ctx.measureText(text).width + 14, bh = 20;
+    const up = my - 34 - bh > T;
+    const by = up ? my - 30 - bh : my + 30, bx = Math.max(L + 2, Math.min(L + pw - bw - 2, mx - bw / 2));
+    ctx.strokeStyle = '#4da3ff'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx, up ? by + bh : by); ctx.stroke();
+    ctx.fillStyle = '#12233a'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#cfe3ff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, bx + 7, by + bh / 2 + .5);
+    ctx.fillStyle = '#0f1115'; ctx.beginPath(); ctx.arc(mx, my, 5, 0, 7); ctx.fill();
+    ctx.lineWidth = 2.2; ctx.beginPath(); ctx.arc(mx, my, 5, 0, 7); ctx.stroke();
+    MK.push({m, x: mx, y: my, bx, by, bw, bh});
+  }
+  ctx.restore();
+
+  if (sel) {
+    // snap both ends to the line; highlight the area under it in between
+    let ia = near(Math.min(sel.t0, sel.t1)), ib = near(Math.max(sel.t0, sel.t1));
+    if (ib > ia || sel.dragging) {
+      const la = pts[ia][1], lb = pts[ib][1], dp = lb - la, pc = dp / la * 100, c = dp >= 0 ? '#2fbf71' : '#f0524f';
+      let shi = -Infinity, slo = Infinity;
+      for (let k = ia; k <= ib; k++) { if (pts[k][1] > shi) shi = pts[k][1]; if (pts[k][1] < slo) slo = pts[k][1]; }
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+      const body = () => { ctx.beginPath(); for (let k = ia; k <= ib; k++) k === ia ? ctx.moveTo(xi(k), y(pts[k][1])) : ctx.lineTo(xi(k), y(pts[k][1])); };
+      const g = ctx.createLinearGradient(0, T, 0, T + ph);
+      g.addColorStop(0, c + '70'); g.addColorStop(1, c + '18');
+      body(); ctx.lineTo(xi(ib), T + ph); ctx.lineTo(xi(ia), T + ph); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+      body(); ctx.strokeStyle = c; ctx.lineWidth = 2.4; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+      for (const k of [ia, ib]) { ctx.beginPath(); ctx.moveTo(xi(k), T); ctx.lineTo(xi(k), T + ph); ctx.stroke(); }
+      ctx.setLineDash([]);
+      for (const k of [ia, ib]) {
+        ctx.fillStyle = '#0f1115'; ctx.beginPath(); ctx.arc(xi(k), y(pts[k][1]), 5, 0, 7); ctx.fill();
+        ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.stroke();
+      }
+      const day = t => multi ? new Date(t).toLocaleDateString([], {day: 'numeric', month: 'short'}) + ' ' : '';
+      const lines = [
+        [`${dp >= 0 ? '+' : ''}${fmt(dp)}  (${dp >= 0 ? '+' : ''}${fmt(pc)}%)`, 'bold 15px system-ui, sans-serif', c],
+        [`${fmt(la)} → ${fmt(lb)}`, '12px system-ui, sans-serif', '#e6e8ee'],
+        [`${span(pts[ib][0] - pts[ia][0])} · ${ib - ia + 1} prices`, '12px system-ui, sans-serif', '#c4c9d4'],
+        [`high ${fmt(shi)} · low ${fmt(slo)}`, '12px system-ui, sans-serif', '#8a90a0'],
+        [`${day(pts[ia][0])}${hhmm(pts[ia][0], !multi)} → ${day(pts[ib][0])}${hhmm(pts[ib][0], !multi)}`, '12px system-ui, sans-serif', '#8a90a0']];
+      const bw = Math.max(...lines.map(([t, f]) => { ctx.font = f; return ctx.measureText(t).width; })) + 20, bh = 18 + lines.length * 16;
+      const top = Math.min(y(shi), y(la), y(lb));
+      let bx = (xi(ia) + xi(ib)) / 2 - bw / 2, by = top - bh - 12;
+      if (by < T) by = Math.min(T + ph - bh, Math.max(y(la), y(lb)) + 14);
+      bx = Math.max(L, Math.min(L + pw - bw, bx));
+      ctx.fillStyle = '#171a21f2'; ctx.strokeStyle = c; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 7); ctx.fill(); ctx.stroke();
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      lines.forEach(([t, f, col], k) => { ctx.font = f; ctx.fillStyle = col; ctx.fillText(t, bx + 10, by + 8 + k * 16 + (k ? 2 : 0)); });
+      ctx.restore();
+    }
+    if (sel.dragging) { tip.style.display = 'none'; return; }
+  }
+  if (addMode && hoverY != null && hoverY >= T && hoverY <= T + ph) {
+    const v = priceAt(hoverY), c = acol(D.alarms.length), over = alarmNear(hoverY);
+    tip.style.display = 'none';
+    ctx.save(); ctx.strokeStyle = over ? '#f0524f' : c; ctx.lineWidth = 1.5; ctx.setLineDash(over ? [3, 3] : []);
+    ctx.beginPath(); ctx.moveTo(L, hoverY); ctx.lineTo(L + pw, hoverY); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = over ? '#f0524f' : c; ctx.fillRect(L + pw + 2, hoverY - 10, R - 4, 20);
+    ctx.fillStyle = '#0f1115'; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(fmt(v), L + pw + 7, hoverY);
+    ctx.font = '12px system-ui, sans-serif'; ctx.fillStyle = over ? '#f0524f' : c; ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'right';
+    ctx.fillText(over ? `click to remove ${over.op === '>=' ? '≥' : '≤'} ${fmt(over.price)}`
+                      : `click to set an alarm when it ${v >= last ? 'rises to' : 'falls to'} ${fmt(v)}`, L + pw - 6, hoverY - 4);
+    return;
+  }
+  if (hoverX != null && hoverX >= L && hoverX <= L + pw) {
+    const vv = v0 + (hoverX - L) / pw * (v1 - v0);
+    const i = Math.max(0, Math.min(n - 1, multi ? Math.round(vv) : near(vv))), best = pts[i];
+    const px = xi(i), py = y(best[1]);
+    ctx.strokeStyle = '#555c6b'; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(px, T); ctx.lineTo(px, T + ph); ctx.moveTo(L, py); ctx.lineTo(L + pw, py); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 4, 0, 7); ctx.fill();
+    const w = multi ? new Date(best[0]).toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'}) + ' ' + hhmm(best[0])
+                    : hhmm(best[0], true);
+    let extra = '';
+    if (multi) { const d = nyDay(best[0]), o = (D.daily || {})[d];
+                 if (o) extra = `  ·  open ${fmt(o[0])}` + (sessionOC(d).close != null ? ` · close ${fmt(o[1])}` : ''); }
+    tip.textContent = `${w}  ${fmt(best[1])}${extra}`;
+    tip.style.display = 'block';
+    tip.style.left = Math.min(px + 12, W - 190) + 'px'; tip.style.top = Math.max(py - 34, 0) + 'px';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Written by the tracker while it runs: live prices, history, status
+data-*.js
+hist-*.js
+quote-*.js
+symbols.js
+settings.js
+market.js
+store/
+tracker.log
+tracker.pid
+
+# Holds the random code that lets pages edit alarms: never commit it
+api.js
+
+# Your own list of companies, alarms, markers and settings
+stocks.json
+
+# Files from before the stock command existed
+old/
+
+__pycache__/
+*.tmp
+_test.html
