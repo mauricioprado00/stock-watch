@@ -4,6 +4,7 @@
   "days": 28,
   "budget": 1800,
   "port": 8765,
+  "extended": true,
   "ranges": [
    "5m",
    "15m",
@@ -23,7 +24,7 @@
    "symbol": "COST",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": [
     {
      "op": ">=",
@@ -52,14 +53,14 @@
    "symbol": "ANT",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": []
   },
   {
    "symbol": "NVDA",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": [],
    "markers": []
   },
@@ -67,14 +68,14 @@
    "symbol": "AAPL",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": []
   },
   {
    "symbol": "MSFT",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": [],
    "markers": []
   },
@@ -82,7 +83,7 @@
    "symbol": "AMZN",
    "tracking": true,
    "every": 5,
-   "since": 1795548304789,
+   "since": 1795554705659,
    "alarms": []
   }
  ]

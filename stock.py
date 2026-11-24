@@ -11,7 +11,8 @@
   stock open [SYM]                      open the page in the browser
   stock markers SYM [--rm T]           list the notes pinned on the chart (add them by clicking it)
   stock ranges [add|rm RANGE...]       the page's range buttons (and ?r= values): 2h, 90m, 3d, 2W, 3mo, Day
-  stock config [--every SEC] [--days N] [--budget REQ_PER_HOUR]   show or change the defaults
+  stock config [--every SEC] [--days N] [--budget REQ_PER_HOUR] [--extended on|off]
+                                        show or change the defaults
 
 How it works: one tracker process polls every tracked company in a single Yahoo request
 (up to 20 companies per request), so adding companies doesn't multiply the request rate.
@@ -22,6 +23,11 @@ intervals are stretched and you are told.
 When tracking starts, the gap since the last stored price is filled from Yahoo with the
 finest bars it still serves for that age: 1-minute for the last 29 days, 5-minute up to
 59 days back, hourly up to ~2 years, daily beyond. Live ticks are finer than any of these.
+
+Extended hours (on by default, stock config --extended off): pre-market from 04:00 and
+after hours until 20:00 New York time are stored and tracked too. Yahoo's batch request
+has no extended-hours prices, so outside regular hours each company takes its own request
+and the checks are spaced to stay within the budget (6 companies, 1800/hour: every 14 s).
 
 Files: stocks.json (the list and settings), store/SYM/DAY.jsonl (all prices, per New York
 trading day), and the *.js files the page reads (data-, hist-, quote-SYM.js, symbols.js,
@@ -45,8 +51,10 @@ SAY = os.path.expanduser("~/.claude/bin/claude-done")
 NY = ZoneInfo("America/New_York")
 YAHOO = "https://query1.finance.yahoo.com"
 SPARK_MAX = 20                      # companies per spark request
-DEFAULTS = {"every": 5, "days": 28, "budget": 1800, "port": 8765,
+DEFAULTS = {"every": 5, "days": 28, "budget": 1800, "port": 8765, "extended": True,
             "ranges": ["5m", "15m", "20m", "30m", "45m", "1h", "Day", "1W", "4W"]}
+PRE, POST = 5.5 * 3600, 4 * 3600    # pre-market 04:00-09:30, after hours until 4 h past the close
+EARLY_CLOSE = {"2026-11-27", "2026-12-24", "2027-11-26"}   # 13:00 New York (same list as the page)
 CFG_LOCK = threading.Lock()
 MIN_EVERY = 2
 # finest bars Yahoo serves by age: (interval, reaches back N days, at most N days per request)
@@ -89,6 +97,20 @@ def chart(sym, query):
 def spark(syms, query="range=1d&interval=1d"):
     """{SYM: {...}} for up to SPARK_MAX symbols in one request."""
     return get(f"/v8/finance/spark?symbols={','.join(syms)}&{query}")
+
+
+def latest(sym):
+    """(epoch ms, price) of the latest trade, extended hours included: the batch request
+    leaves those out. The last 1-minute bar carries the time of the latest trade."""
+    now = int(time.time())
+    res = chart(sym, f"interval=1m&includePrePost=true&period1={now - 1800}&period2={now + 60}")
+    b = bars(res)
+    return (b[-1][0], b[-1][1]) if b else None
+
+
+def ext_every(n, every, budget):
+    """Seconds between checks outside regular hours, where each company is its own request."""
+    return max(every, -(-n * 3600 // int(budget * 0.9)))
 
 
 def bars(res):
@@ -218,6 +240,19 @@ def ny_day(ms):
     return datetime.fromtimestamp(ms / 1000, NY).strftime("%Y-%m-%d")
 
 
+def regular(day):
+    """(open, close) of a day's regular session, epoch ms."""
+    y, m, d = map(int, day.split("-"))
+    o = datetime(y, m, d, 9, 30, tzinfo=NY)
+    c = datetime(y, m, d, 13 if day in EARLY_CLOSE else 16, 0, tzinfo=NY)
+    return int(o.timestamp() * 1000), int(c.timestamp() * 1000)
+
+
+def in_regular(t):
+    o, c = regular(ny_day(t))
+    return o <= t < c
+
+
 def sdir(sym):
     p = os.path.join(STORE, sym)
     os.makedirs(p, exist_ok=True)
@@ -300,9 +335,12 @@ def akey(a):
     return f"{a['op']}{float(a['price'])}"
 
 
-def fill(sym, frm_ms, to_ms, log=print):
-    """Prices for (frm_ms, to_ms] from Yahoo, as fine as Yahoo serves for each age."""
+def fill(sym, frm_ms, to_ms, log=print, ext=None):
+    """Prices for (frm_ms, to_ms] from Yahoo, as fine as Yahoo serves for each age,
+    with pre-market and after-hours prices when extended hours are on."""
     now = time.time()
+    if ext is None:
+        ext = load_cfg()["defaults"]["extended"]
     out, upper, requests = {}, to_ms / 1000, 0
     for iv, reach_days, chunk_days in GRAINS:
         lower = max(frm_ms / 1000, now - reach_days * 86400)
@@ -310,7 +348,8 @@ def fill(sym, frm_ms, to_ms, log=print):
         while upper - a >= 60:
             e = min(upper, a + chunk_days * 86400)
             try:
-                res = chart(sym, f"interval={iv}&period1={int(a)}&period2={int(e) + 60}")
+                res = chart(sym, f"interval={iv}&period1={int(a)}&period2={int(e) + 60}"
+                                 + ("&includePrePost=true" if ext and iv != "1d" else ""))
                 requests += 1
                 for t, c in bars(res):
                     if frm_ms < t <= to_ms:
@@ -342,7 +381,7 @@ def refresh_daily(sym, days, log=print):
 
 
 def meta_from_yahoo(sym):
-    m = chart(sym, "interval=1d&range=5d")["meta"]
+    m = chart(sym, "interval=1d&range=1d")["meta"]   # a longer range gives the close before the range
     meta = load_meta(sym)
     meta.update({"name": m.get("longName") or m.get("shortName"), "currency": m.get("currency"),
                  "prevClose": m.get("chartPreviousClose")})
@@ -364,6 +403,15 @@ def catch_up(sym, days, log=print):
             meta["history_from"] = want_from
             save_meta(sym, meta)
             log(f"{sym}: loaded {len(pts)} older prices back to {ny_day(want_from)} with {n} request(s)")
+    meta = load_meta(sym)
+    if load_cfg()["defaults"]["extended"] and not meta.get("ext_from"):
+        if first and last:   # days stored before extended hours were kept: add their pre-market and after hours
+            pts, n = fill(sym, max(first[0], want_from) - 1, last[0], log, ext=True)
+            pts = [p for p in pts if not in_regular(p[0])]
+            merge_into(sym, pts)
+            log(f"{sym}: added {len(pts)} pre-market and after-hours prices with {n} request(s)")
+        meta["ext_from"] = want_from
+        save_meta(sym, meta)
     frm = last[0] if last else want_from
     pts, n = fill(sym, frm, now_ms(), log)
     append(sym, pts)
@@ -420,10 +468,12 @@ def prev_close(meta, session):
 
 def write_data(sym, *, pts, session, meta, alarms, state, every, hist_version, err=None, days=DEFAULTS["days"]):
     prices = [p for _, p in pts]
+    o, c = regular(session)
+    reg = [p for t, p in pts if o <= t < c]      # high and low are the regular session's, as quoted
     pc = prev_close(meta, session)
     obj = {"symbol": sym, "name": meta.get("name"), "currency": meta.get("currency"),
            "prevClose": pc, "quotePrevClose": meta.get("prevClose"), "session": session,
-           "high": max(prices) if prices else None, "low": min(prices) if prices else None,
+           "high": max(reg) if reg else None, "low": min(reg) if reg else None, "regular": [o, c],
            "points": pts, "alarms": alarms, "state": state, "every": every,
            "updated": now_ms(), "error": err, "histVersion": hist_version,
            # official open/close per session, for the days the page can show
@@ -531,7 +581,7 @@ class Track:
 
     def write(self, state):
         write_data(self.sym, days=self.days, pts=self.pts, session=self.session, meta=self.meta, alarms=self.alarms,
-                   state=state, every=self.every, hist_version=self.hist_version, err=self.err)
+                   state=state, every=getattr(self, "shown_every", self.every), hist_version=self.hist_version, err=self.err)
 
 
 class Api(BaseHTTPRequestHandler):
@@ -647,7 +697,7 @@ def run():
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGINT, on_term)
 
-    period, period_at, days_seen = None, 0, None
+    period, period_at, days_seen, was_outside = None, 0, None, False
     log("tracker started")
     start_api(load_cfg()["defaults"]["port"])
     while True:
@@ -685,7 +735,9 @@ def run():
         if not period or now - period_at > 1800:
             try:
                 period, period_at = market_period(next(iter(tracks))), now
-                wjs("market.js", "onMarket", {"start": period[0], "end": period[1]})
+                wjs("market.js", "onMarket", {"start": period[0], "end": period[1],
+                                              "pre": period[0] - PRE, "post": period[1] + POST,
+                                              "extended": c["defaults"]["extended"]})
                 if now > period[0]:                    # today's open is known once trading started
                     for tr in tracks.values():
                         tr.meta = refresh_daily(tr.sym, tr.days, log)
@@ -693,20 +745,46 @@ def run():
                 log(f"could not read market hours ({ex})")
                 period, period_at = period or (0, 1e12), now
         start, end = period
-        if now > end + 300:
-            log("market closed, tracker exiting (history is filled up to the close)")
+        ext = c["defaults"]["extended"]
+        first, last = (start - PRE, end + POST) if ext else (start, end)
+        if now > last + 300:
+            log(f"{'after hours over' if ext else 'market closed'}, tracker exiting (history is filled up to now)")
             for tr in tracks.values():                 # keep the official close
                 tr.meta = refresh_daily(tr.sym, tr.days, log)
             shutdown("closed")
             return
-        if now < start - 60:
+        if now < first - 60:
             for tr in tracks.values():
                 tr.write("waiting")
-            time.sleep(min(30, start - 60 - now))
-            period = None if start - now < 120 else period
+            time.sleep(min(30, first - 60 - now))
+            period = None if first - now < 120 else period
             continue
 
         due = [tr for tr in tracks.values() if now >= tr.next_due]
+        outside = not start <= now < end
+        if outside != was_outside:
+            if outside:
+                n = len(tracks)
+                log(f"{'pre-market' if now < start else 'after hours'}: one request per company, "
+                    f"checks every {ext_every(n, min(t.every for t in tracks.values()), c['defaults']['budget'])}s or more")
+            was_outside = outside
+        if outside:          # extended hours: a request per company, spaced to fit the budget
+            n, budget = len(tracks), c["defaults"]["budget"]
+            for tr in due:
+                every = ext_every(n, tr.every, budget)
+                try:
+                    tp = latest(tr.sym)
+                    if tp:
+                        tr.tick(tp[0], tp[1], None, c["defaults"]["days"])
+                    tr.err = None
+                    tr.next_due = (int(now) // every + 1) * every
+                except Exception as ex:
+                    tr.err = str(ex)
+                    log(f"{tr.sym}: poll failed: {ex}")
+                    tr.next_due = now + 30
+                tr.shown_every = every
+                tr.write("tracking")
+            due = []
         for i in range(0, len(due), SPARK_MAX):
             group = due[i:i + SPARK_MAX]
             try:
@@ -726,6 +804,7 @@ def run():
                 for tr in group:                      # back off a little on errors
                     tr.next_due = now + 30
             for tr in group:
+                tr.shown_every = tr.every
                 tr.write("tracking")
                 if tr.next_due <= now:
                     tr.next_due = (int(now) // tr.every + 1) * tr.every   # aligned, so polls coincide
@@ -973,13 +1052,21 @@ def cmd_status(a):
     m = read_js("market.js")
     if m:
         now = time.time()
-        if now < m["start"]:
-            print(f"market: opens in {(m['start'] - now) / 60:.0f} min")
+        hm = lambda r: f"{int(r) // 3600}h {int(r) % 3600 // 60:02d}m"
+        pre, post = m.get("pre", m["start"]), m.get("post", m["end"])
+        if now < pre or (now < m["start"] and not m.get("extended")):
+            print(f"market: opens in {hm(m['start'] - now)}")
+        elif now < m["start"]:
+            print(f"market: pre-market, opens in {hm(m['start'] - now)}")
         elif now < m["end"]:
-            r = int(m["end"] - now)
-            print(f"market: open, closes in {r // 3600}h {r % 3600 // 60:02d}m")
+            print(f"market: open, closes in {hm(m['end'] - now)}")
+        elif now < post and m.get("extended"):
+            print(f"market: closed, after hours for {hm(post - now)}")
         else:
             print("market: closed")
+        if tracked and c["defaults"]["extended"]:
+            print(f"        outside regular hours: one request per company, every "
+                  f"{ext_every(len(tracked), min(e['every'] for e in tracked), c['defaults']['budget'])}s or more")
     print(f"\n{'':2}{'SYMBOL':7}{'STATE':30}{'EVERY':>6}{'PRICE':>11}{'TODAY':>9}  {'UPDATED':12}ALARMS")
     for e in c["symbols"]:
         q = read_js(f"quote-{e['symbol']}.js") or {}
@@ -1032,6 +1119,8 @@ def cmd_config(a):
         v = getattr(a, k)
         if v is not None:
             c["defaults"][k] = v
+    if a.extended is not None:
+        c["defaults"]["extended"] = a.extended == "on"
     save_cfg(c)
     if a.days is not None:
         try:
@@ -1047,7 +1136,8 @@ def cmd_config(a):
     print(f"every  {d['every']}s   seconds between price checks when start has no --every\n"
           f"days   {d['days']}     history kept on the page and loaded for new companies\n"
           f"budget {d['budget']}  most Yahoo requests per hour\n"
-          f"port   {d['port']}  where the pages send alarm changes (127.0.0.1 only)")
+          f"port   {d['port']}  where the pages send alarm changes (127.0.0.1 only)\n"
+          f"extended {'on' if d['extended'] else 'off'}  pre-market (from 04:00) and after hours (to 20:00 New York) stored and tracked")
 
 
 def main():
@@ -1070,7 +1160,8 @@ def main():
     s = sub.add_parser("ranges"); s.add_argument("action", nargs="?", choices=["add", "rm"])
     s.add_argument("specs", nargs="*"); s.set_defaults(fn=cmd_ranges)
     s = sub.add_parser("config"); s.add_argument("--every", type=int); s.add_argument("--days", type=int)
-    s.add_argument("--budget", type=int); s.add_argument("--port", type=int); s.set_defaults(fn=cmd_config)
+    s.add_argument("--budget", type=int); s.add_argument("--port", type=int)
+    s.add_argument("--extended", choices=["on", "off"]); s.set_defaults(fn=cmd_config)
     s = sub.add_parser("_run"); s.set_defaults(fn=lambda a: run())
     a = p.parse_args()
     if not a.cmd:

@@ -1,1 +1,1 @@
-window.onQuote({"symbol":"AAPL","price":352.63,"prevClose":349.08,"state":"tracking","every":5,"updated":1795550005356,"alarmHit":false});
+window.onQuote({"symbol":"AAPL","price":353.8,"prevClose":349.08,"state":"tracking","every":14,"updated":1795554741467,"alarmHit":false});

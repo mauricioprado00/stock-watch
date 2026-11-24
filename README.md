@@ -31,6 +31,12 @@ measure.
   finest bars Yahoo still serves for that age (1-minute up to 29 days back,
   then 5-minute, hourly, daily).
 - Prices are stored per New York trading day in `store/SYMBOL/DAY.jsonl`.
+- Pre-market (04:00–09:30 New York) and after hours (16:00–20:00) are stored and
+  tracked too; the page shades them, and `e` hides them. Yahoo's batch request
+  has no extended-hours prices, so then each company is its own request and the
+  checks are spaced to fit the budget (6 companies: every 14 s). Turn it off with
+  `stock config --extended off`. Open, close, high and low stay the regular
+  session's.
 - The page loads its data as `<script>` files, so it works straight from disk
   (`file://`). While the tracker runs it also serves a small API on 127.0.0.1
   for setting alarms and markers from the page.

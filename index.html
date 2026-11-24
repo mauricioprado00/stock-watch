@@ -28,6 +28,8 @@
   #sym { font-size:20px; font-weight:600; letter-spacing:.5px; }
   #price { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; }
   #chg { font-size:18px; font-variant-numeric:tabular-nums; }
+  #ext { font-size:14px; font-variant-numeric:tabular-nums; color:var(--muted); }
+  #ext b { color:#b9a3e3; font-weight:600; }
   .meta { color:var(--muted); font-variant-numeric:tabular-nums; }
   .up { color:var(--up); } .down { color:var(--down); }
   #state { padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; letter-spacing:.3px; align-self:center; }
@@ -107,6 +109,7 @@
   <span id="sym">—</span>
   <span id="price">—</span>
   <span id="chg"></span>
+  <span id="ext"></span>
   <span id="state"></span>
   <span class="meta" id="range"></span>
   <span class="meta" id="alarmList"></span>
@@ -117,7 +120,7 @@
 <div id="wrap"><canvas id="c"></canvas><div id="tip"></div><div id="offnote"></div><div id="histnote"></div></div>
 <div id="modalBg"><div id="modal"></div></div>
 <div id="toast"></div>
-<footer><span id="upd"></span> · <kbd>`</kbd> next stock, <kbd>~</kbd> previous · <kbd>#</kbd> longer range, <kbd>@</kbd> shorter · <kbd>a</kbd> add alarm · click to add a marker · drag to measure · <kbd>g</kbd><kbd>p</kbd> / <kbd>g</kbd><kbd>n</kbd> previous / next period · <kbd>?</kbd> help · <span id="stale"></span></footer>
+<footer><span id="upd"></span> · <kbd>`</kbd> next stock, <kbd>~</kbd> previous · <kbd>#</kbd> longer range, <kbd>@</kbd> shorter · <kbd>a</kbd> add alarm · <kbd>e</kbd> extended hours · click to add a marker · drag to measure · <kbd>g</kbd><kbd>p</kbd> / <kbd>g</kbd><kbd>n</kbd> previous / next period · <kbd>?</kbd> help · <span id="stale"></span></footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -183,7 +186,8 @@ function stateOf(sym) {
   if (q.state === 'stopped') return {k: 'off', text: `not tracking · last price ${when(q.updated)}`};
   if (Date.now() - q.updated > Math.max(30000, 4000 * (q.every || 5)))
     return {k: 'off', text: `not tracking · tracker stopped ${when(q.updated)}`};
-  return {k: 'live', text: `● live · every ${q.every}s`};
+  const xk = extKind(Date.now());
+  return {k: 'live', text: `● live${xk ? ' · ' + EXT_NAME[xk] : ''} · every ${q.every}s`};
 }
 
 const curRange = () => rangeLabel;
@@ -232,6 +236,22 @@ function nyMs(y, m, d, h, mi) {                // New York wall time -> epoch ms
   const g = Date.UTC(y, m - 1, d, h, mi), p = nyParts(g);
   return g - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - g);
 }
+// regular session of the New York day holding t: [open, close] epoch ms (cached per day)
+const REG = new Map();
+function regWin(t) {
+  const k = Math.floor((t - 5 * 3600000) / 86400000);   // the New York date (trading hours never straddle it)
+  let w = REG.get(k);
+  if (!w) {
+    const d = new Date(k * 86400000), y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, dd = d.getUTCDate();
+    const key = `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    w = [nyMs(y, m, dd, 9, 30), nyMs(y, m, dd, EARLY_CLOSE.has(key) ? 13 : 16, 0)];
+    REG.set(k, w);
+  }
+  return w;
+}
+const extKind = t => { const [o, c] = regWin(t); return t < o ? 'pre' : t >= c ? 'post' : null; };
+const EXT_NAME = {pre: 'pre-market', post: 'after hours'};
+let showExt = localStorage.getItem('stockwatch.ext') !== 'off';
 function calendarSession(now) {
   const p = nyParts(now);
   for (let k = 0; k < 12; k++) {
@@ -240,7 +260,8 @@ function calendarSession(now) {
     const key = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     if (wd === 0 || wd === 6 || HOLIDAYS.has(key)) continue;
     const s = {start: nyMs(y, m, d, 9, 30), end: nyMs(y, m, d, EARLY_CLOSE.has(key) ? 13 : 16, 0), early: EARLY_CLOSE.has(key)};
-    if (s.end > now) return s;
+    s.pre = s.start - 5.5 * 3600000; s.post = s.end + 4 * 3600000;
+    if (s.post > now) return s;
   }
 }
 const dur = ms => {
@@ -249,12 +270,15 @@ const dur = ms => {
 };
 function clock() {
   const now = Date.now();
-  const s = M && M.end * 1000 > now ? {start: M.start * 1000, end: M.end * 1000} : calendarSession(now);
+  const s = M && (M.post || M.end) * 1000 > now
+    ? {start: M.start * 1000, end: M.end * 1000, pre: (M.pre || M.start) * 1000, post: (M.post || M.end) * 1000}
+    : calendarSession(now);
   if (!s) { $('clock').textContent = ''; return; }
-  const open = now >= s.start;
+  const open = now >= s.start && now < s.end;
   $('clock').className = open && s.end - now < 15 * 60000 ? 'soon' : '';
-  $('clock').innerHTML = open
-    ? `market closes in <b>${dur(s.end - now)}</b>${s.early ? ' (early close)' : ''}`
+  $('clock').innerHTML = open ? `market closes in <b>${dur(s.end - now)}</b>${s.early ? ' (early close)' : ''}`
+    : now >= s.end ? `closed · after hours end in <b>${dur(s.post - now)}</b>`
+    : now >= s.pre ? `pre-market · market opens in <b>${dur(s.start - now)}</b>`
     : `market opens in <b>${dur(s.start - now)}</b>`;
 }
 clock(); setInterval(clock, 1000);
@@ -321,10 +345,16 @@ function openRangeSettings() {
 }
 
 // ---------------------------------------------------------------- moving through history
+let apCache = {key: '', pts: []};
 function allPoints() {       // earlier days at 1 point per minute, then every price of the session
   const h = H ? H.bars : [], today = D ? D.points : [];
+  const key = `${showExt}-${h.length}-${h.length ? h[h.length - 1][0] : 0}-${today.length}-${today.length ? today[today.length - 1][0] : 0}`;
+  if (apCache.key === key) return apCache.pts;
   const cut = today.length ? today[0][0] : Infinity;
-  return h.filter(p => p[0] < cut).concat(today);
+  let a = h.filter(p => p[0] < cut).concat(today);
+  if (!showExt) a = a.filter(p => !extKind(p[0]));   // regular hours only
+  apCache = {key, pts: a};
+  return a;
 }
 const lastAtOrBefore = (a, t) => { let lo = -1, hi = a.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; a[m][0] <= t ? lo = m : hi = m - 1; } return lo; };
 function sessionBounds(a, i) {   // a session is a run of prices without a gap of 3 hours or more
@@ -372,6 +402,11 @@ document.addEventListener('keydown', e => {
   if (e.key === 'g') { gAt = Date.now(); return; }
   if (e.key === '?') { showHelp(); return; }
   if (e.key === 'a' || e.key === 'A') { setAddMode(!addMode); return; }
+  if (e.key === 'e') {
+    showExt = !showExt; localStorage.setItem('stockwatch.ext', showExt ? 'on' : 'off');
+    toast(showExt ? 'Showing pre-market and after hours (shaded).' : 'Showing regular hours only.');
+    sel = null; render(); return;
+  }
   if (e.key === 'Escape' && addMode) { setAddMode(false); return; }
   if (e.key === 'Escape' && sel) { sel = null; draw(); return; }
   if (e.key === '@' || e.key === '#') {                    // shorter / longer range, stops at the ends
@@ -559,6 +594,7 @@ function showHelp() {
     <tr><td>${k('g', 'p')} ${k('g', 'n')}</td><td>previous / next period of the current range (look back in history)</td></tr>
     <tr><td>${k('g', 'l')}</td><td>back to live</td></tr>
     <tr><td>${k('a')}</td><td>add-alarm mode on / off: click a price to set an alarm, click an alarm line to remove it</td></tr>
+    <tr><td>${k('e')}</td><td>show / hide pre-market (from 04:00) and after hours (to 20:00 New York), shaded on the chart</td></tr>
     <tr><td>${k('Esc')}</td><td>leave add-alarm mode, clear the selection</td></tr>
     <tr><td>click</td><td>add a marker on the line (e.g. “bought”); click a marker to edit or delete it</td></tr>
     <tr><td>drag</td><td>select a stretch of the line: change, time, high and low</td></tr>
@@ -612,6 +648,12 @@ function render() {
   $('price').textContent = fmt(last); $('price').className = cls;
   $('chg').textContent = `${ch >= 0 ? '+' : ''}${fmt(ch)} (${ch >= 0 ? '+' : ''}${fmt(pct)}%)`; $('chg').className = cls;
   const oc = sessionOC(D.session, D.points);
+  const lt = D.points[D.points.length - 1][0], xk = extKind(lt);
+  if (xk === 'post' && oc.close != null) {
+    const d = last - oc.close, c2 = d >= 0 ? 'up' : 'down';
+    $('ext').innerHTML = `<b>after hours</b> <span class="${c2}">${d >= 0 ? '+' : ''}${fmt(d)} (${d >= 0 ? '+' : ''}${fmt(d / oc.close * 100)}%)</span> since the close ${fmt(oc.close)} · ${hhmm(lt)}`;
+  } else if (xk === 'pre') $('ext').innerHTML = `<b>pre-market</b> · ${hhmm(lt)}`;
+  else $('ext').innerHTML = '';
   $('range').textContent = `open ${fmt(oc.open)}${oc.close != null ? ' · close ' + fmt(oc.close) : ''} · ` +
     `low ${fmt(D.low)} · high ${fmt(D.high)} · prev close ${fmt(D.prevClose)}`;
   const qp = D.quotePrevClose, off = qp && D.prevClose && Math.abs(qp - D.prevClose) / D.prevClose > 0.001;
@@ -649,7 +691,8 @@ const nyDay = t => { const p = nyParts(t); return `${p.year}-${String(p.month).p
 function sessionOC(day, pts) {   // official open/close (Yahoo daily) of a session; close only once it's over
   const oc = (D.daily || {})[day];
   const over = day !== nyDay(Date.now()) || (M && Date.now() > M.end * 1000 && nyDay(M.end * 1000) === day);
-  return {open: oc ? oc[0] : pts && pts.length ? pts[0][1] : null, close: over ? (oc ? oc[1] : pts && pts.length ? pts[pts.length - 1][1] : null) : null};
+  const reg = pts ? pts.filter(p => !extKind(p[0])) : [];
+  return {open: oc ? oc[0] : reg.length ? reg[0][1] : null, close: over ? (oc ? oc[1] : reg.length ? reg[reg.length - 1][1] : null) : null};
 }
 
 let minsCache = {key: '', pts: []};
@@ -751,15 +794,16 @@ function draw() {
     if (label) { ctx.fillStyle = '#8a90a0'; ctx.fillText(label, Math.max(px, L + ctx.measureText(label).width / 2), T + ph + 7); }
   };
   if (multi) {
-    let lastDay = '', lastLabelX = -1e9;
-    pts.forEach((p, i) => {
-      const day = new Date(p[0]).toDateString();
-      if (day === lastDay) return;
-      lastDay = day;
-      const px = xi(i), show = px - lastLabelX > 46;
+    const starts = [];          // New York trading days: after hours run past midnight in Europe
+    pts.forEach((p, i) => { if (!i || pts[i][0] - pts[i - 1][0] >= 3 * 3600000) starts.push(i); });
+    // a day cut short at the left edge gives its label to the next one when both don't fit
+    if (starts.length > 1 && xi(starts[1]) - xi(starts[0]) <= 46) starts[0] = -1 - starts[0];
+    let lastLabelX = -1e9;
+    for (const s0 of starts) {
+      const i = s0 < 0 ? -1 - s0 : s0, day = nyDay(pts[i][0]), px = xi(i), show = s0 >= 0 && px - lastLabelX > 46;
       if (show) lastLabelX = px;
-      vline(px, show ? new Date(p[0]).toLocaleDateString([], {weekday: 'short', day: 'numeric'}) : '');
-    });
+      vline(px, show ? new Date(day + 'T12:00:00Z').toLocaleDateString([], {weekday: 'short', day: 'numeric', timeZone: 'UTC'}) : '');
+    }
   } else {
     const spanMin = (v1 - v0) / 60000;
     const tStep = [1, 2, 5, 10, 15, 30, 60, 120].find(s => spanMin / s <= 9) * 60000;
@@ -784,15 +828,33 @@ function draw() {
       ctx.fillStyle = '#0f1115d0'; ctx.fillRect(lx, ly - 7, w, 14);
       ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, lx + 4, ly);
     };
+    const band = (x0, x1, kind) => {            // pre-market / after hours: a faint band behind the line
+      x0 = Math.max(L, x0); x1 = Math.min(L + pw, x1);
+      if (x1 - x0 < 1) return;
+      ctx.fillStyle = '#8f7bd014'; ctx.fillRect(x0, T, x1 - x0, ph);
+      ctx.font = '11px system-ui, sans-serif';
+      if (x1 - x0 > ctx.measureText(EXT_NAME[kind]).width + 10) {
+        ctx.fillStyle = '#8f7bd0aa'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(EXT_NAME[kind], x0 + 5, T + 4);
+      }
+    };
     for (const [a, b] of runs) {
       const day = nyDay(pts[a][0]), [Y, Mo, Dd] = day.split('-').map(Number), oc = (D.daily || {})[day];
       const openT = nyMs(Y, Mo, Dd, 9, 30), closeT = nyMs(Y, Mo, Dd, EARLY_CLOSE.has(day) ? 13 : 16, 0);
       const over = sessionOC(day).close != null;
-      // multi-day views place points by index: the session's first and last point stand for open and close
+      // multi-day views place points by index: the first and last regular-hours point stand for open and close
       // (the last 1-minute bar is stamped 15:59, so allow a couple of minutes at the window's edges)
-      const xo = multi ? xi(a) : Math.max(L, x(openT)), xc = multi ? xi(b) : Math.min(L + pw, x(closeT));
-      const showOpen = multi ? pts[a][0] - openT < 5 * 60000 : openT >= v0 - 120000 && openT <= v1;
-      const showClose = over && (multi ? closeT - pts[b][0] < 5 * 60000 : closeT >= v0 && closeT <= v1 + 120000);
+      const ia = Math.max(a, lastAtOrBefore(pts, openT - 1) + 1), ib = Math.min(b, lastAtOrBefore(pts, closeT - 1));
+      if (multi) {
+        if (ia > a) band(xi(a), xi(Math.min(ia, b)), 'pre');
+        if (ib < b) band(xi(Math.max(ib, a)), xi(b), 'post');
+      } else {
+        if (pts[a][0] < openT) band(x(pts[a][0]), x(Math.min(openT, pts[b][0])), 'pre');
+        if (pts[b][0] >= closeT) band(x(Math.max(closeT, pts[a][0])), x(pts[b][0]), 'post');
+      }
+      if (multi && ia > ib) continue;           // nothing from regular hours in view
+      const xo = multi ? xi(ia) : Math.max(L, x(openT)), xc = multi ? xi(ib) : Math.min(L + pw, x(closeT));
+      const showOpen = multi ? pts[ia][0] - openT < 5 * 60000 : openT >= v0 - 120000 && openT <= v1;
+      const showClose = over && (multi ? closeT - pts[ib][0] < 5 * 60000 : closeT >= v0 && closeT <= v1 + 120000);
       if (showOpen) vmark(xo, '#7aa2c8', 'open', `open${oc ? ' ' + fmt(oc[0]) : ''}`);
       if (showClose) vmark(xc, '#d7c48a', 'close', `close${oc ? ' ' + fmt(oc[1]) : ''}`);
     }
@@ -928,7 +990,8 @@ function draw() {
     let extra = '';
     if (multi) { const d = nyDay(best[0]), o = (D.daily || {})[d];
                  if (o) extra = `  ·  open ${fmt(o[0])}` + (sessionOC(d).close != null ? ` · close ${fmt(o[1])}` : ''); }
-    tip.textContent = `${w}  ${fmt(best[1])}${extra}`;
+    const bk = extKind(best[0]);
+    tip.textContent = `${w}  ${fmt(best[1])}${bk ? '  · ' + EXT_NAME[bk] : ''}${extra}`;
     tip.style.display = 'block';
     tip.style.left = Math.min(px + 12, W - 190) + 'px'; tip.style.top = Math.max(py - 34, 0) + 'px';
   }

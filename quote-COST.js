@@ -1,1 +1,1 @@
-window.onQuote({"symbol":"COST","price":1088.68,"prevClose":1097.91,"state":"tracking","every":5,"updated":1795550005349,"alarmHit":false});
+window.onQuote({"symbol":"COST","price":1090.51,"prevClose":1097.91,"state":"tracking","every":14,"updated":1795554740318,"alarmHit":false});
